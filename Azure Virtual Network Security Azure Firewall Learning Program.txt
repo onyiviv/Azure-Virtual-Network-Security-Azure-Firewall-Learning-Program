@@ -1,0 +1,79 @@
+1. Project Overview & Objectives
+As modern cloud infrastructure scales, relying solely on decentralized Network Security Groups (NSGs) creates significant administrative overhead and lacks deep packet inspection. This project implements an enterprise-grade network security perimeter using Azure Firewall (Standard SKU), a fully managed, stateful Firewall-as-a-Service (FWaaS).
+
+Core Goals
+Centralized Traffic Control: Transitioning network security from localized layer-4 subnets to a unified security policy engine.
+
+Principle of Least Privilege: Restricting outbound egress traffic to only approved corporate endpoints.
+
+Advanced Monitoring & Threat Intel: Actively intercepting malicious domains using Microsoft's threat intelligence feeds and integrating telemetry with Azure Monitor.
+
+2. Infrastructure & Network Topology
+The cloud environment is built around a secure Hub-and-Spoke architecture to guarantee traffic isolation:
+
+Hub Network (vnet-hub-prod): Acts as the central security transit zone. It hosts the AzureFirewallSubnet containing the firewall appliance and a management subnet for secure platform access.
+
+Spoke Network (vnet-workload-prod): Houses isolated enterprise compute resources where business operations take place.
+
+Virtual Network Peering: A bidirectional peering mesh bridges the two networks, allowing spoke traffic to transit directly into the firewall's internal interface.
+
+Traffic Redirection (UDR)
+To prevent spoke workloads from bypassing the security perimeter, a User-Defined Route (UDR) table (rt-workload-prod) was bound to the workload subnets.
+
+Configured Route: $0.0.0.0/0$
+
+Next Hop Type: Virtual Appliance
+
+Next Hop Address: 10.0.0.4 (Azure Firewall Private IP)
+
+3. Firewall Policy Design & Rulesets
+All traffic filtering rules are managed centrally via an attached Azure Firewall Policy (fwp-central-prod), maintaining a strict Default Deny posture.
+
+DNS Proxy Integration
+To maintain strict FQDN visibility, the DNS Proxy feature was enabled on the firewall policy. Spoke workloads point to 10.0.0.4 for domain name resolution, allowing the firewall to inspect, analyze, and enforce domain-level restrictions before traffic ever leaves the virtual network.
+
+Rule Collections
+A. Destination NAT (DNAT) Rules
+Configured to securely publish internal resources to authorized external networks by mapping the firewall's public IP address inbound to translated private targets on explicit ports.
+
+B. Network Rules
+Explicit layer-4 rules mapping structural connectivity. This includes tracking core internal protocols (TCP/UDP) across strict source/destination blocks.
+
+C. Application Rules (FQDN Filtering)
+Enforces precise layer-7 restrictions on web traffic (Ports 80/443).
+
+Allowed Targets: *.google.com (Permitted for search and validation framework).
+
+Blocked Targets: *.github.com (Implicitly dropped via default policy stance to honor Least Privilege).
+
+4. Threat Intelligence & Monitoring Setup
+Threat Intelligence
+The firewall policy is configured with Threat Intelligence-based filtering set to Alert and Deny. It actively cross-references all inbound and outbound traffic flows with Microsoft's real-time threat feed to proactively intercept known malicious IP addresses, command-and-control (C2) nodes, and phishing domains.
+
+Monitoring & Telemetry Integration
+The Azure Firewall instance is fully integrated with Azure Monitor and a dedicated Log Analytics Workspace. This provides deep operational visibility, enabling:
+
+Real-time tracking of hit-counts across rule collections.
+
+Auditing of DNS proxy requests and FQDN tracking logs.
+
+Diagnostic logging to capture blocked security incidents.
+
+5. Validation Logs & Evidence Verification(images uploaded to this repository shows the following:
+
+Routing Verification:  — Shows the UDR table pointing all traffic to 10.0.0.4.
+
+Policy Verification:  — Shows the active Application, Network, and NAT rule collections.
+
+Successful Allowed Traffic:  — Verified Log Capture showing a successful domain translation and loading state for google.com before environmental lockdowns were enforced.
+
+Successful Blocked Traffic:  — Displays the terminal command terminal execution timing out (Request to UnKnown timed-out) when attempting to resolve unauthorized domains.
+
+6. Project Reflection & Technical Troubleshooting
+A primary benefit of this implementation was diagnosing and remediating real-world cloud networking failures during the validation phase:
+
+Firewall Interface Initialization Failure: The initial firewall instance provisioned without a private IP address due to an unintentional "Forced Tunneling" configuration mismatch in the portal. Re-deploying with explicit standard networking flags resolved the issue, assigning the required 10.0.0.4 interface gateway.
+
+Asymmetric Routing & Spoke Isolation: Outbound lookups initially timed out due to a missing transit path. Telemetry audits revealed an unconfigured VNet peering link. Implementing bidirectional peering properly bridged the Hub and Spoke boundaries.
+
+Administrative Session Disconnect: Issuing an ipconfig /release routine within an active cloud session severed the host's IP lease, instantly dropping the management connection. A localized virtual machine Restart was initiated from the Azure Portal dashboard, which forced a fresh DHCP check, updated the local routing tables to recognize the new peering mesh, and safely restored administrative access.
